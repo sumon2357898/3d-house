@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="screen-orientation" content="landscape" />
+  <title>3D 房子漫游 | Interactive 3D House</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      width: 100%; height: 100%;
+      overflow: hidden;
+      background: #000;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+      touch-action: none;
+      position: fixed;
+    }
+    canvas { display: block; width: 100% !important; height: 100% !important; }
+
+    /* 横屏提示 */
+    #rotate-hint {
+      display: none;
+      position: fixed; inset: 0;
+      background: #111;
+      color: #fff;
+      z-index: 100;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 24px;
+      font-size: 1.1rem;
+    }
+    #rotate-hint .icon { font-size: 3.5rem; margin-bottom: 16px; animation: spin 2s ease-in-out infinite; }
+    @keyframes spin {
+      0%, 100% { transform: rotate(0deg); }
+      50% { transform: rotate(90deg); }
+    }
+    @media screen and (orientation: portrait) and (max-width: 900px) {
+      #rotate-hint { display: flex; }
+      #blocker, #hud, #joystick-zone, #look-zone, #btn-jump, #btn-sprint { display: none !important; }
+    }
+
+    #blocker {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.78);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: #fff; z-index: 10; cursor: pointer;
+      text-align: center; padding: 20px;
+    }
+    #blocker h1 { font-size: clamp(1.6rem, 5vw, 2.2rem); margin-bottom: 12px; }
+    #blocker p { font-size: clamp(0.95rem, 3.2vw, 1.1rem); opacity: 0.92; line-height: 1.6; max-width: 520px; }
+    #blocker .hint { margin-top: 20px; font-size: 0.9rem; opacity: 0.7; }
+    #blocker button {
+      margin-top: 22px;
+      padding: 12px 28px;
+      font-size: 1.05rem;
+      border: none;
+      border-radius: 999px;
+      background: #4a9eff;
+      color: #fff;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    #blocker button:active { transform: scale(0.97); }
+
+    #hud {
+      position: absolute; top: max(12px, env(safe-area-inset-top));
+      left: max(12px, env(safe-area-inset-left));
+      color: #fff; font-size: 13px; z-index: 5;
+      background: rgba(0,0,0,0.5); padding: 8px 12px; border-radius: 8px;
+      pointer-events: none; line-height: 1.45;
+      white-space: pre-line;
+    }
+
+    /* 虚拟摇杆 */
+    #joystick-zone {
+      position: absolute;
+      left: max(16px, env(safe-area-inset-left));
+      bottom: max(20px, env(safe-area-inset-bottom));
+      width: 140px; height: 140px;
+      z-index: 6;
+      touch-action: none;
+      display: none;
+    }
+    #joystick-base {
+      width: 120px; height: 120px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.35);
+      position: absolute; left: 10px; top: 10px;
+    }
+    #joystick-knob {
+      width: 54px; height: 54px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.55);
+      border: 2px solid rgba(255,255,255,0.8);
+      position: absolute;
+      left: 50%; top: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    /* 右侧视角区域提示（无陀螺仪时用） */
+    #look-zone {
+      position: absolute;
+      right: 0; top: 0; bottom: 0;
+      width: 45%;
+      z-index: 4;
+      display: none;
+      touch-action: none;
+    }
+
+    /* 跳跃 / 奔跑按钮 */
+    #btn-jump, #btn-sprint {
+      position: absolute;
+      z-index: 6;
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.45);
+      background: rgba(0,0,0,0.4);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      touch-action: none;
+      user-select: none;
+    }
+    #btn-jump {
+      right: max(24px, env(safe-area-inset-right));
+      bottom: max(36px, env(safe-area-inset-bottom));
+    }
+    #btn-sprint {
+      right: max(24px, env(safe-area-inset-right));
+      bottom: calc(36px + 76px + env(safe-area-inset-bottom, 0px));
+    }
+    #btn-jump.active, #btn-sprint.active {
+      background: rgba(74, 158, 255, 0.55);
+      border-color: #4a9eff;
+    }
+
+    #gyro-status {
+      position: absolute;
+      top: max(12px, env(safe-area-inset-top));
+      right: max(12px, env(safe-area-inset-right));
+      color: #fff;
+      font-size: 12px;
+      background: rgba(0,0,0,0.45);
+      padding: 6px 10px;
+      border-radius: 6px;
+      z-index: 5;
+      pointer-events: none;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="rotate-hint">
+    <div class="icon">📱</div>
+    <div>请将手机横过来使用<br>Rotate to landscape</div>
+  </div>
+
+  <div id="blocker">
+    <h1>🏠 3D 房子漫游</h1>
+    <p id="blocker-desc">
+      电脑：点击开始 · WASD 移动 · 鼠标环顾 · 空格跳跃 · Shift 奔跑<br><br>
+      手机：点击开始 · 左摇杆移动 · 陀螺仪转向 · 右侧按钮跳跃/奔跑
+    </p>
+    <button id="start-btn">点击开始 / 授权陀螺仪</button>
+    <p class="hint">探索客厅 · 厨房 · 卧室 · 卫生间</p>
+  </div>
+
+  <div id="hud">房间：加载中…</div>
+  <div id="gyro-status">陀螺仪：关闭</div>
+
+  <div id="joystick-zone">
+    <div id="joystick-base">
+      <div id="joystick-knob"></div>
+    </div>
+  </div>
+  <div id="look-zone"></div>
+  <div id="btn-jump">跳</div>
+  <div id="btn-sprint">跑</div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+
+    // ========== 设备检测 ==========
+    const isMobile = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) ||
+      (navigator.maxTouchPoints > 1 && window.matchMedia('(pointer: coarse)').matches);
+
+    // ========== 基础场景 ==========
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x87ceeb);
+    scene.fog = new THREE.Fog(0x87ceeb, 20, 55);
+
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(0, 1.6, 8);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    // 灯光
+    const ambient = new THREE.AmbientLight(0xffffff, 0.45);
+    scene.add(ambient);
+
+    const sun = new THREE.DirectionalLight(0xfff5e0, 1.1);
+    sun.position.set(12, 20, 8);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 1;
+    sun.shadow.camera.far = 50;
+    sun.shadow.camera.left = -20;
+    sun.shadow.camera.right = 20;
+    sun.shadow.camera.top = 20;
+    sun.shadow.camera.bottom = -20;
+    scene.add(sun);
+
+    const point1 = new THREE.PointLight(0xfff0dd, 0.7, 18);
+    point1.position.set(0, 2.8, 0);
+    scene.add(point1);
+
+    // ========== 材质 ==========
+    const mat = {
+      wall: new THREE.MeshStandardMaterial({ color: 0xf5f0e6, roughness: 0.9 }),
+      wallDark: new THREE.MeshStandardMaterial({ color: 0xe8e0d5, roughness: 0.9 }),
+      floorLiving: new THREE.MeshStandardMaterial({ color: 0xc4a77d, roughness: 0.7 }),
+      floorKitchen: new THREE.MeshStandardMaterial({ color: 0xd8d4cc, roughness: 0.6 }),
+      floorBed: new THREE.MeshStandardMaterial({ color: 0xb8a08a, roughness: 0.75 }),
+      floorBath: new THREE.MeshStandardMaterial({ color: 0xd0e0e8, roughness: 0.5 }),
+      wood: new THREE.MeshStandardMaterial({ color: 0x8b5a2b, roughness: 0.6 }),
+      woodDark: new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.55 }),
+      fabric: new THREE.MeshStandardMaterial({ color: 0x4a6fa5, roughness: 0.85 }),
+      metal: new THREE.MeshStandardMaterial({ color: 0x999999, metalness: 0.7, roughness: 0.3 }),
+      white: new THREE.MeshStandardMaterial({ color: 0xf8f8f8, roughness: 0.5 }),
+      black: new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.4 }),
+      green: new THREE.MeshStandardMaterial({ color: 0x3d8b5f, roughness: 0.7 }),
+      glass: new THREE.MeshStandardMaterial({ color: 0xaaddff, transparent: true, opacity: 0.35, roughness: 0.1 }),
+      mattress: new THREE.MeshStandardMaterial({ color: 0xf0e6d8, roughness: 0.9 }),
+      pillow: new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8 }),
+      ceramic: new THREE.MeshStandardMaterial({ color: 0xf5f5f5, roughness: 0.3 }),
+    };
+
+    function box(w, h, d, material, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
+      const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+      mesh.position.set(x, y, z);
+      mesh.rotation.set(rx, ry, rz);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      return mesh;
+    }
+
+    function add(parent, ...objs) {
+      objs.forEach(o => parent.add(o));
+    }
+
+    // ========== 房子 ==========
+    const house = new THREE.Group();
+    scene.add(house);
+
+    const H = 3.2;
+    const T = 0.25;
+
+    house.add(box(12, 0.15, 8, mat.floorLiving, 0, 0, 4));
+    house.add(box(8, 0.15, 8, mat.floorKitchen, -6, 0, -4));
+    house.add(box(8, 0.15, 8, mat.floorBed, 6, 0, -4));
+    house.add(box(4, 0.15, 5, mat.floorBath, 0, 0, -5.5));
+
+    house.add(box(12.5, H, T, mat.wall, 0, H/2, 8));
+    house.add(box(20.5, H, T, mat.wall, 0, H/2, -8));
+    house.add(box(T, H, 16.5, mat.wall, -10, H/2, 0));
+    house.add(box(T, H, 16.5, mat.wall, 10, H/2, 0));
+
+    house.add(box(T, H, 4, mat.wallDark, -2, H/2, 4));
+    house.add(box(T, H, 4, mat.wallDark, 2, H/2, 4));
+    house.add(box(T, H, 5, mat.wallDark, -2, H/2, -5.5));
+    house.add(box(T, H, 5, mat.wallDark, 2, H/2, -5.5));
+    house.add(box(1.2, H, T, mat.wallDark, -1.4, H/2, -3));
+    house.add(box(1.2, H, T, mat.wallDark, 1.4, H/2, -3));
+
+    house.add(box(20.5, 0.15, 16.5, mat.white, 0, H, 0));
+
+    // 客厅家具
+    const sofa = new THREE.Group();
+    sofa.position.set(-3.5, 0, 3);
+    add(sofa,
+      box(2.4, 0.45, 1.0, mat.fabric, 0, 0.35, 0),
+      box(2.4, 0.7, 0.25, mat.fabric, 0, 0.7, -0.4),
+      box(0.25, 0.55, 1.0, mat.fabric, -1.1, 0.55, 0),
+      box(0.25, 0.55, 1.0, mat.fabric, 1.1, 0.55, 0)
+    );
+    house.add(sofa);
+    house.add(box(1.2, 0.4, 0.7, mat.wood, -3.5, 0.2, 4.5));
+    house.add(box(2.2, 0.5, 0.5, mat.woodDark, 3.5, 0.25, 7.2));
+    house.add(box(1.8, 1.0, 0.08, mat.black, 3.5, 1.1, 7.35));
+    const lamp = new THREE.Group();
+    lamp.position.set(1.5, 0, 6.5);
+    add(lamp, box(0.08, 1.6, 0.08, mat.metal, 0, 0.8, 0), box(0.5, 0.15, 0.5, mat.white, 0, 1.65, 0));
+    house.add(lamp);
+    const plant = new THREE.Group();
+    plant.position.set(5, 0, 6);
+    add(plant, box(0.35, 0.4, 0.35, mat.ceramic, 0, 0.2, 0), box(0.5, 0.7, 0.5, mat.green, 0, 0.75, 0));
+    house.add(plant);
+
+    // 厨房
+    house.add(box(4.5, 0.9, 0.7, mat.white, -7.5, 0.45, -7.3));
+    house.add(box(4.5, 0.08, 0.75, mat.metal, -7.5, 0.94, -7.3));
+    house.add(box(0.9, 2.0, 0.8, mat.metal, -3.2, 1.0, -7.3));
+    house.add(box(1.0, 0.12, 0.6, mat.black, -6, 0.98, -7.3));
+    house.add(box(1.6, 0.08, 1.0, mat.wood, -6, 0.75, -3.5));
+    house.add(box(0.08, 0.75, 0.08, mat.wood, -6.7, 0.375, -3.9));
+    house.add(box(0.08, 0.75, 0.08, mat.wood, -5.3, 0.375, -3.9));
+    house.add(box(0.08, 0.75, 0.08, mat.wood, -6.7, 0.375, -3.1));
+    house.add(box(0.08, 0.75, 0.08, mat.wood, -5.3, 0.375, -3.1));
+    [[-6.8, -2.8], [-5.2, -2.8], [-6.8, -4.2], [-5.2, -4.2]].forEach(([x, z]) => {
+      const chair = new THREE.Group();
+      chair.position.set(x, 0, z);
+      add(chair,
+        box(0.45, 0.08, 0.45, mat.wood, 0, 0.45, 0),
+        box(0.08, 0.45, 0.08, mat.wood, -0.18, 0.22, -0.18),
+        box(0.08, 0.45, 0.08, mat.wood, 0.18, 0.22, -0.18),
+        box(0.08, 0.45, 0.08, mat.wood, -0.18, 0.22, 0.18),
+        box(0.08, 0.45, 0.08, mat.wood, 0.18, 0.22, 0.18),
+        box(0.45, 0.5, 0.08, mat.wood, 0, 0.75, -0.2)
+      );
+      house.add(chair);
+    });
+
+    // 卧室
+    const bed = new THREE.Group();
+    bed.position.set(6.5, 0, -5.5);
+    add(bed,
+      box(2.0, 0.35, 2.4, mat.woodDark, 0, 0.25, 0),
+      box(1.9, 0.25, 2.2, mat.mattress, 0, 0.5, 0),
+      box(0.7, 0.18, 0.4, mat.pillow, -0.5, 0.7, -0.9),
+      box(0.7, 0.18, 0.4, mat.pillow, 0.5, 0.7, -0.9)
+    );
+    house.add(bed);
+    house.add(box(1.4, 2.2, 0.6, mat.wood, 8.5, 1.1, -7.2));
+    house.add(box(0.5, 0.55, 0.45, mat.wood, 5.2, 0.275, -7.0));
+    house.add(box(0.9, 0.08, 0.6, mat.wood, 8, 0.7, -3));
+    house.add(box(0.08, 0.7, 0.08, mat.wood, 7.65, 0.35, -3.2));
+    house.add(box(0.08, 0.7, 0.08, mat.wood, 8.35, 0.35, -3.2));
+    house.add(box(0.08, 0.7, 0.08, mat.wood, 7.65, 0.35, -2.8));
+    house.add(box(0.08, 0.7, 0.08, mat.wood, 8.35, 0.35, -2.8));
+
+    // 卫生间
+    const toilet = new THREE.Group();
+    toilet.position.set(-0.8, 0, -6.8);
+    add(toilet, box(0.5, 0.4, 0.6, mat.ceramic, 0, 0.2, 0), box(0.45, 0.5, 0.25, mat.ceramic, 0, 0.55, -0.25));
+    house.add(toilet);
+    house.add(box(1.0, 0.15, 0.5, mat.ceramic, 0.9, 0.85, -7.3));
+    house.add(box(0.9, 0.7, 0.45, mat.white, 0.9, 0.35, -7.3));
+    house.add(box(1.2, 2.0, 0.05, mat.glass, -0.1, 1.0, -4.2));
+    house.add(box(0.05, 2.0, 1.2, mat.glass, 0.5, 1.0, -4.8));
+
+    function makeWindow(x, y, z, w, h, rotY = 0) {
+      house.add(box(w + 0.1, h + 0.1, 0.08, mat.woodDark, x, y, z, 0, rotY));
+      house.add(box(w, h, 0.04, mat.glass, x, y, z + (rotY === 0 ? 0.02 : 0), 0, rotY));
+    }
+    makeWindow(0, 1.8, 8.05, 2.5, 1.4);
+    makeWindow(-10.05, 1.8, -2, 0.05, 1.4, Math.PI / 2);
+    makeWindow(10.05, 1.8, -2, 0.05, 1.4, Math.PI / 2);
+
+    // ========== 控制状态 ==========
+    const player = new THREE.Object3D();
+    player.position.set(0, 1.6, 8);
+    scene.add(player);
+    player.add(camera);
+    camera.position.set(0, 0, 0);
+
+    // 欧拉角控制视角（手机 + 桌面通用）
+    const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+    const PI_2 = Math.PI / 2;
+    let yaw = 0;
+    let pitch = 0;
+
+    // 桌面 PointerLock（可选增强）
+    let pointerLocked = false;
+    const desktopControls = new PointerLockControls(camera, document.body);
+    // 我们自己管理旋转，所以不把 desktopControls 的 object 加到场景
+
+    const keys = {};
+    document.addEventListener('keydown', e => { keys[e.code] = true; if (['Space','ArrowUp','ArrowDown'].includes(e.code)) e.preventDefault(); });
+    document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+    // 鼠标移动（桌面）
+    document.addEventListener('mousemove', (e) => {
+      if (!pointerLocked || isMobile) return;
+      const sens = 0.0022;
+      yaw -= e.movementX * sens;
+      pitch -= e.movementY * sens;
+      pitch = Math.max(-PI_2 + 0.05, Math.min(PI_2 - 0.05, pitch));
+    });
+
+    // ========== 虚拟摇杆 ==========
+    const joyZone = document.getElementById('joystick-zone');
+    const joyKnob = document.getElementById('joystick-knob');
+    const joyBase = document.getElementById('joystick-base');
+    let joyActive = false;
+    let joyVec = { x: 0, y: 0 }; // -1 ~ 1
+    const joyMax = 38;
+
+    function setKnob(x, y) {
+      joyKnob.style.transform = `translate(calc(-50% + ${x}px), calc(-50% + ${y}px))`;
+    }
+
+    function onJoyStart(clientX, clientY) {
+      joyActive = true;
+      const rect = joyBase.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      updateJoy(clientX - cx, clientY - cy);
+    }
+    function updateJoy(dx, dy) {
+      const len = Math.hypot(dx, dy);
+      const clamped = Math.min(len, joyMax);
+      const nx = len > 0 ? (dx / len) * clamped : 0;
+      const ny = len > 0 ? (dy / len) * clamped : 0;
+      setKnob(nx, ny);
+      joyVec.x = nx / joyMax;
+      joyVec.y = ny / joyMax;
+    }
+    function onJoyEnd() {
+      joyActive = false;
+      joyVec.x = 0;
+      joyVec.y = 0;
+      setKnob(0, 0);
+    }
+
+    joyZone.addEventListener('touchstart', (e) => {
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      onJoyStart(t.clientX, t.clientY);
+    }, { passive: false });
+    joyZone.addEventListener('touchmove', (e) => {
+      e.preventDefault();
+      if (!joyActive) return;
+      const t = e.changedTouches[0];
+      const rect = joyBase.getBoundingClientRect();
+      updateJoy(t.clientX - (rect.left + rect.width / 2), t.clientY - (rect.top + rect.height / 2));
+    }, { passive: false });
+    joyZone.addEventListener('touchend', (e) => { e.preventDefault(); onJoyEnd(); }, { passive: false });
+    joyZone.addEventListener('touchcancel', onJoyEnd);
+
+    // ========== 右侧触摸视角（陀螺仪不可用时） ==========
+    const lookZone = document.getElementById('look-zone');
+    let lookTouchId = null;
+    let lastLookX = 0, lastLookY = 0;
+
+    lookZone.addEventListener('touchstart', (e) => {
+      if (gyroEnabled) return;
+      e.preventDefault();
+      const t = e.changedTouches[0];
+      lookTouchId = t.identifier;
+      lastLookX = t.clientX;
+      lastLookY = t.clientY;
+    }, { passive: false });
+    lookZone.addEventListener('touchmove', (e) => {
+      if (gyroEnabled || lookTouchId === null) return;
+      e.preventDefault();
+      for (const t of e.changedTouches) {
+        if (t.identifier === lookTouchId) {
+          const dx = t.clientX - lastLookX;
+          const dy = t.clientY - lastLookY;
+          lastLookX = t.clientX;
+          lastLookY = t.clientY;
+          const sens = 0.004;
+          yaw -= dx * sens;
+          pitch -= dy * sens;
+          pitch = Math.max(-PI_2 + 0.05, Math.min(PI_2 - 0.05, pitch));
+        }
+      }
+    }, { passive: false });
+    lookZone.addEventListener('touchend', (e) => {
+      for (const t of e.changedTouches) {
+        if (t.identifier === lookTouchId) lookTouchId = null;
+      }
+    });
+
+    // ========== 跳跃 / 奔跑按钮 ==========
+    const btnJump = document.getElementById('btn-jump');
+    const btnSprint = document.getElementById('btn-sprint');
+    let mobileJump = false;
+    let mobileSprint = false;
+
+    function bindHold(btn, on, off) {
+      const start = (e) => { e.preventDefault(); on(); btn.classList.add('active'); };
+      const end = (e) => { e.preventDefault(); off(); btn.classList.remove('active'); };
+      btn.addEventListener('touchstart', start, { passive: false });
+      btn.addEventListener('touchend', end, { passive: false });
+      btn.addEventListener('touchcancel', end, { passive: false });
+      btn.addEventListener('mousedown', start);
+      btn.addEventListener('mouseup', end);
+      btn.addEventListener('mouseleave', end);
+    }
+    bindHold(btnJump, () => { mobileJump = true; }, () => { mobileJump = false; });
+    bindHold(btnSprint, () => { mobileSprint = true; }, () => { mobileSprint = false; });
+
+    // ========== 陀螺仪 ==========
+    let gyroEnabled = false;
+    let gyroBaseAlpha = null;
+    let gyroBaseBeta = null;
+    let gyroBaseGamma = null;
+    const gyroStatus = document.getElementById('gyro-status');
+
+    function handleOrientation(e) {
+      if (!gyroEnabled || e.alpha === null) return;
+
+      // 首次记录基准，方便“相对当前朝向”
+      if (gyroBaseAlpha === null) {
+        gyroBaseAlpha = e.alpha;
+        gyroBaseBeta = e.beta;
+        gyroBaseGamma = e.gamma;
+      }
+
+      // 横屏时常用 gamma 控制左右，beta 控制上下（不同设备略有差异）
+      // 使用相对变化更稳
+      const dAlpha = ((e.alpha - gyroBaseAlpha + 540) % 360) - 180;
+      const dBeta = e.beta - gyroBaseBeta;
+      const dGamma = e.gamma - gyroBaseGamma;
+
+      // 横屏：gamma ≈ 左右转头，beta ≈ 抬头低头
+      // 系数可调
+      yaw = -dGamma * (Math.PI / 180) * 1.1;
+      pitch = -dBeta * (Math.PI / 180) * 0.9;
+      pitch = Math.max(-PI_2 + 0.1, Math.min(PI_2 - 0.1, pitch));
+    }
+
+    async function enableGyro() {
+      try {
+        if (typeof DeviceOrientationEvent !== 'undefined' &&
+            typeof DeviceOrientationEvent.requestPermission === 'function') {
+          const perm = await DeviceOrientationEvent.requestPermission();
+          if (perm !== 'granted') {
+            gyroStatus.textContent = '陀螺仪：被拒绝';
+            gyroStatus.style.display = 'block';
+            return false;
+          }
+        }
+        window.addEventListener('deviceorientation', handleOrientation, true);
+        gyroEnabled = true;
+        gyroBaseAlpha = null;
+        gyroStatus.textContent = '陀螺仪：开启';
+        gyroStatus.style.display = 'block';
+        return true;
+      } catch (err) {
+        console.warn(err);
+        gyroStatus.textContent = '陀螺仪：不可用';
+        gyroStatus.style.display = 'block';
+        return false;
+      }
+    }
+
+    // ========== 开始按钮 ==========
+    const blocker = document.getElementById('blocker');
+    const startBtn = document.getElementById('start-btn');
+    const hud = document.getElementById('hud');
+    let playing = false;
+
+    startBtn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (isMobile) {
+        joyZone.style.display = 'block';
+        btnJump.style.display = 'flex';
+        btnSprint.style.display = 'flex';
+        lookZone.style.display = 'block';
+        await enableGyro();
+        // 如果没有陀螺仪，右侧触摸仍可用
+        if (!gyroEnabled) {
+          lookZone.style.display = 'block';
+        }
+      } else {
+        try {
+          await document.body.requestPointerLock();
+          pointerLocked = true;
+        } catch (_) {}
+      }
+      blocker.style.display = 'none';
+      playing = true;
+    });
+
+    document.addEventListener('pointerlockchange', () => {
+      pointerLocked = document.pointerLockElement === document.body;
+      if (!pointerLocked && !isMobile) {
+        blocker.style.display = 'flex';
+        playing = false;
+      }
+    });
+
+    // 点击 blocker 其他区域也能开始（桌面）
+    blocker.addEventListener('click', (e) => {
+      if (e.target === startBtn) return;
+      startBtn.click();
+    });
+
+    // ========== 移动逻辑 ==========
+    const velocity = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+    let canJump = true;
+    const playerHeight = 1.6;
+    const gravity = 28;
+    let verticalVel = 0;
+
+    function getCurrentRoom(x, z) {
+      if (z > 0) return '客厅 Living Room';
+      if (x < -2 && z < 0) return '厨房 Kitchen';
+      if (x > 2 && z < 0) return '卧室 Bedroom';
+      if (x >= -2 && x <= 2 && z < -3) return '卫生间 Bathroom';
+      return '走廊 / 连接区';
+    }
+
+    const bounds = { minX: -9.6, maxX: 9.6, minZ: -7.6, maxZ: 7.6 };
+
+    function applyRotation() {
+      euler.set(pitch, yaw, 0, 'YXZ');
+      player.quaternion.setFromEuler(euler);
+    }
+
+    // ========== 动画循环 ==========
+    let prevTime = performance.now();
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const time = performance.now();
+      const delta = Math.min((time - prevTime) / 1000, 0.1);
+      prevTime = time;
+
+      if (playing) {
+        applyRotation();
+
+        velocity.x -= velocity.x * 10.0 * delta;
+        velocity.z -= velocity.z * 10.0 * delta;
+
+        // 输入
+        let inputX = 0, inputZ = 0;
+        if (isMobile) {
+          inputX = joyVec.x;
+          inputZ = -joyVec.y; // 摇杆上 = 前进
+        } else {
+          inputZ = Number(keys['KeyW'] || keys['ArrowUp']) - Number(keys['KeyS'] || keys['ArrowDown']);
+          inputX = Number(keys['KeyD'] || keys['ArrowRight']) - Number(keys['KeyA'] || keys['ArrowLeft']);
+        }
+
+        const len = Math.hypot(inputX, inputZ);
+        if (len > 1) { inputX /= len; inputZ /= len; }
+
+        const sprint = isMobile ? mobileSprint : (keys['ShiftLeft'] || keys['ShiftRight']);
+        const speed = sprint ? 11 : 5.5;
+
+        if (inputZ !== 0 || inputX !== 0) {
+          // 相对当前朝向移动
+          const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(player.quaternion);
+          forward.y = 0;
+          forward.normalize();
+          const right = new THREE.Vector3(1, 0, 0).applyQuaternion(player.quaternion);
+          right.y = 0;
+          right.normalize();
+
+          const move = new THREE.Vector3();
+          move.addScaledVector(forward, inputZ);
+          move.addScaledVector(right, inputX);
+          move.normalize().multiplyScalar(speed * delta * 18);
+
+          velocity.x += move.x;
+          velocity.z += move.z;
+        }
+
+        player.position.x += velocity.x * delta;
+        player.position.z += velocity.z * delta;
+
+        // 跳跃
+        verticalVel -= gravity * delta;
+        player.position.y += verticalVel * delta;
+
+        if (player.position.y < playerHeight) {
+          verticalVel = 0;
+          player.position.y = playerHeight;
+          canJump = true;
+        }
+
+        const wantJump = isMobile ? mobileJump : keys['Space'];
+        if (wantJump && canJump) {
+          verticalVel = 8.5;
+          canJump = false;
+          if (isMobile) mobileJump = false; // 点按一次
+        }
+
+        // 边界
+        player.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, player.position.x));
+        player.position.z = Math.max(bounds.minZ, Math.min(bounds.maxZ, player.position.z));
+
+        const room = getCurrentRoom(player.position.x, player.position.z);
+        hud.textContent = `房间：${room}\n位置：(${player.position.x.toFixed(1)}, ${player.position.z.toFixed(1)})`;
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    animate();
+
+    // 窗口 / 旋转自适应
+    function onResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+    window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', () => setTimeout(onResize, 150));
+
+    // 尝试锁定横屏（部分浏览器支持）
+    async function tryLockLandscape() {
+      try {
+        if (screen.orientation && screen.orientation.lock) {
+          await screen.orientation.lock('landscape');
+        }
+      } catch (_) {}
+    }
+    if (isMobile) tryLockLandscape();
+  </script>
+</body>
+</html>
